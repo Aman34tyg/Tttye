@@ -8,36 +8,22 @@
 
 // Load JQuery library and make accessible via $
 window.$ = window.jQuery = require('jquery')
-// load interprocess communication module
-var ipcRenderer = require('electron').ipcRenderer
-// MasterPass regular expression
-const MP_REGEX = /^(?=.*[A-Za-z])(?=.*\d)(?=.*[$@$!%*#?&])[A-Za-z\d$@$!%*#?&]{8,}$/g
-const RESPONSES = {
-  invalid: 'MUST CONTAIN 1 ALPHABET, 1 NUMBER, 1 SYMBOL AND BE AT LEAST 8 CHARACTERS',
-  correct: 'CORRECT MASTERPASS',
-  incorrect: 'INCORRECT MASTERPASS',
-  setSuccess: 'MASTERPASS SUCCESSFULLY SET',
-  empty: 'PLEASE ENTER A MASTERPASS',
-  done: 'You have successfully completed the setup! <br/> Please relaunch the program to start encrypting after this window closes automatically',
-  resetSuccess: 'You have successfully reset your MasterPass. You\'ll be redirected to verify it shortly.'
-}
-const COLORS = {
-  bad: '#9F3A38',
-  good: '#2ECC71',
-  highlight: '#333333'
-}
+// Cross-view dependencies
+const {ipcRenderer, remote, shell} = require('electron')
+const {CRYPTO, REGEX, RESPONSES, COLORS} = require('../config')
+const logger = require('winston')
+const Handlebars = require('handlebars')
 
 /* Shared functions */
-function navigate (panelName) {
-  var oldSel = $('.panel-container > div.current') // get current panel
-  var sel = $(`#panel-${panelName}`) // get panel to navigate to
-  $('.current button').hide()
+function navigate (panel) {
+  let oldSel = $('.panel-container > div.current') // get current panel
+  let sel = $(`#panel-${panel}`) // get panel to navigate to
   oldSel.removeClass('current') // apply hide styling
   sel.addClass('current') // apply show styling
 }
 
 function validateMasterPass (field, errLabel) {
-  var MPel = $(`input#${field + 'Input'}`)
+  const MPel = $(`input#${field}Input`)
   const masterpass = MPel.val()
   if (!masterpass) {
     // MP is empty
@@ -45,7 +31,7 @@ function validateMasterPass (field, errLabel) {
     errLabel.text(RESPONSES.empty).show()
     // Clear MP input field
     MPel.val('')
-  } else if (MP_REGEX.test(masterpass)) {
+  } else if (REGEX.MASTERPASS.test(masterpass)) {
     // MP is valid
     // Hide errLabel
     errLabel.hide()
@@ -58,3 +44,45 @@ function validateMasterPass (field, errLabel) {
     MPel.val('')
   }
 }
+
+/* Onload */
+$(window).on('load', function() {
+  $(".navigationLink").each(function(index) {
+    let $this = $(this)
+    $this.on('click', function(event) {
+      let target = $this.data("target")
+      let panel = $this.data("panel")
+      let tab = $this.data("tab")
+      let action = $this.data("action")
+
+      if (action) {
+        // Is an action to perform
+        // TODO: Action (i.e. check for updates/open updater)
+        if (REGEX.APP_EVENT.test(action)) {
+          console.log(`Got main app event ${action}`)
+          // Emit event in main proc
+          ipcRenderer.send(action)
+        } else {
+          console.log(`Got render event ${action}`)
+          // Emit event in render proc
+          ipcRenderer.emit(action)
+        }
+      } else if (tab) {
+        console.log(`Got tab ${tab}`)
+        // is a tab to navigate to
+        $(".item.active").first().removeClass("active")
+        $(`a[data-tab='${tab}']`).addClass("active")
+        navigate(tab)
+      } else if (target) {
+        console.log(`Got URL ${target}`)
+        // is a URL so open it
+        shell.openExternal(target)
+      } else if (panel) {
+        console.log(`Got panel ${panel}`)
+        // target is just a panel to navigate to
+        navigate(panel)
+      }
+      return false
+    })
+  })
+})

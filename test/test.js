@@ -2,10 +2,10 @@
 const assert = require('assert')
 const path = require('path')
 const expect = require('chai').expect
-const crypto = require('../app/src/crypto.js')
-const Db = require('../app/src/Db')
-const MasterPassKey = require('../app/src/MasterPassKey')
-const MasterPass = require('../app/src/MasterPass')
+const crypto = require('../app/core/crypto.js')
+const Db = require('../app/core/Db')
+const MasterPassKey = require('../app/core/MasterPassKey')
+const MasterPass = require('../app/core/MasterPass')
 const scrypto = require('crypto')
 const _ = require('lodash')
 const fs = require('fs-extra')
@@ -39,12 +39,16 @@ describe("Crypter Core Modules' tests", function () {
   const TEST_FILE_CONTENTS = '#Crypter'
   const DECRYTING_TEMP_DIR_PATH = `${path.dirname(ENCRYTED_TEST_FILE_PATH)}/.decrypting`
   const ENCRYTING_TEMP_DIR_PATH = `${path.dirname(ENCRYTED_TEST_FILE_PATH)}/.crypting`
+  const DB_TEST_FILE_PATH = `${global.paths.tmp}/db`
+  const BUF2HEX_TEST_ARR = [248, 27, 158, 201, 66, 216, 80, 254, 81, 104, 238, 9, 1, 231, 134, 106, 8, 202, 44, 89, 231, 61, 99, 139, 167, 162, 21, 216, 127, 85, 142, 86]
+  const BUF2HEX_TEST_HEX_EXPECTED = 'f81b9ec942d850fe5168ee0901e7866a08ca2c59e73d638ba7a215d87f558e56'
+  const SAFEEQ_TEST_HEX = 'f81b9ec942d850f35168ee0901e7866a08ca2c59e73d638ba7a215d87f558e56'
 
   // Before all tests have run
   before(() => {
     // create temporary dir
     fs.ensureDirSync(global.paths.tmp)
-    global.mdb = new Db(global.paths.mdb)
+    global.mdb = new Db(global.paths.mdb, function () {})
   })
 
   // After all tests have run
@@ -58,6 +62,15 @@ describe("Crypter Core Modules' tests", function () {
    ******************************/
 
   describe('Crypto module', function () {
+    it('should convert string buffer to hex string', function () {
+      const b2hr = crypto.buf2hex(BUF2HEX_TEST_ARR)
+      expect(b2hr).to.equal(BUF2HEX_TEST_HEX_EXPECTED)
+    })
+    it('should check if two strings are equal time safely', function () {
+      expect(crypto.timingSafeEqual(BUF2HEX_TEST_HEX_EXPECTED, BUF2HEX_TEST_HEX_EXPECTED)).to.be.true
+      expect(crypto.timingSafeEqual(BUF2HEX_TEST_HEX_EXPECTED, SAFEEQ_TEST_HEX)).to.be.false
+      expect(crypto.timingSafeEqual(SAFEEQ_TEST_HEX, BUF2HEX_TEST_HEX_EXPECTED)).to.be.false
+    })
     describe('deriveKey (and genPassHash)', function () {
       // deriveKey uses genPassHash Promise internally. Testing the derived
       // MasterPassKey before and after also suffienctly tests genPassHash
@@ -91,7 +104,7 @@ describe("Crypter Core Modules' tests", function () {
           })
           .then((dmp) => {
             // The deserialized salt should successfully create a Buffer
-            expect(dmp.salt instanceof Buffer).to.be.true
+            expect(Buffer.isBuffer(dmp.salt)).to.be.true
             // The deserialized salt should have been used to recreate the
             // Buffer orginally used to derive the key correctly which should
             // result in the newly derive MPK equalling to the originally
@@ -282,7 +295,7 @@ describe("Crypter Core Modules' tests", function () {
    * Db module.js
    ******************************/
   describe('Db module', function () {
-    let db
+    var db
     // Helper promises
     let putValue = function (key, value) {
       return new Promise(function (resolve, reject) {
@@ -301,9 +314,11 @@ describe("Crypter Core Modules' tests", function () {
       })
     }
     // Before any tests are run in this suite
-    before(() => {
+    beforeEach((done) => {
       // open test db
-      db = new Db(`${global.paths.tmp}/db`)
+      db = new Db(DB_TEST_FILE_PATH, function(){
+        done()
+      })
       // Declare global test object
       global.testObj = {
         name: 'crypto',
@@ -313,9 +328,10 @@ describe("Crypter Core Modules' tests", function () {
     })
 
     // After all tests in this suite have run
-    after(function () {
+    afterEach(function () {
       // Close test db
       db.close()
+      fs.removeSync(DB_TEST_FILE_PATH)
     })
     it('should save and restore obj correctly', function () {
       const beforeSaveObj = _.cloneDeep(global.testObj)
@@ -327,42 +343,37 @@ describe("Crypter Core Modules' tests", function () {
         .then(() => {
           // The object restored from the db should equal to the original object
           expect(global.testObj).to.deep.equal(beforeSaveObj)
-          return
         })
         .catch((err) => {
           throw (err)
         })
     })
 
-    it('should save and restore obj correctly persistently', function () {
+    it('should save and restore obj correctly persistently and db.open', function () {
       // should work still work when db is closed and reopened
       const beforeSaveObj = _.cloneDeep(global.testObj)
       return db.saveGlobalObj('testObj')
         .then(() => {
           // unset global testObj
           global.testObj = null
+          expect(db.open).to.be.true
           // close db
-          db.close()
-          // reopen the db
-          db = new Db(`${global.paths.tmp}/db`)
-          return db.restoreGlobalObj('testObj')
+          return db.close()
         })
         .then(() => {
-          // The object restored from the db should equal to the original object
-          expect(global.testObj).to.deep.equal(beforeSaveObj)
-          return
+          expect(db.open).to.be.false
         })
         .catch((err) => {
           throw (err)
         })
     })
 
-    describe('onlyGetValue', () => {
+    describe('put and get', () => {
       it('should resolve value if key exists', function () {
         // Initialise the database with a value
-        return putValue('key', 'value')
+        return db.put('key', 'value')
           .then(() => {
-            return db.onlyGetValue('key')
+            return db.get('key')
           })
           .then((value) => {
             // The received value should equal the original put value
@@ -372,17 +383,13 @@ describe("Crypter Core Modules' tests", function () {
             throw err
           })
       })
-      it('should resolve null if key not found', function () {
-        return db.onlyGetValue('notExist')
+      it('should resolve false if key not found', function () {
+        return db.get('notExist')
           .then((value) => {
             expect(value).to.equal(false)
           })
-      })
-      it('should resolve null if key not found', function () {
-        return db.onlyGetValue('')
           .catch((err) => {
-            // Expect an error to occur
-            expect(err.message).to.equal('key cannot be an empty String')
+            throw err
           })
       })
     })
@@ -430,7 +437,7 @@ describe("Crypter Core Modules' tests", function () {
       })
 
       it('should throw error when JSON parse fails', function () {
-        return putValue('s', 'i')
+        return db.put('s', 'i')
           .then(() => {
             return db.restoreGlobalObj('s')
           })

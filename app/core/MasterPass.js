@@ -7,9 +7,11 @@
 const crypto = require('./crypto')
 const _ = require('lodash')
 
+// TODO: Make independent from global obj! use param instead
+
 // Check MasterPass
-exports.check = function (masterpass) {
-  return new Promise(function(resolve, reject) {
+exports.check = (masterpass) => {
+  return new Promise((resolve, reject) => {
     // deriveKey using the salt originally used to generate the
     // MasterPassKey
     crypto.deriveKey(masterpass, global.creds.mpsalt)
@@ -18,10 +20,10 @@ exports.check = function (masterpass) {
         return crypto.genPassHash(mpk.key, global.creds.mpksalt)
       })
       .then((mpk) => {
-        // check if MasterPassKey hash is equal to the MasterPassKey hash
-        // (stored in mdb)
-        const match = _.isEqual(global.creds.mpkhash, mpk.hash)
-        // return teh match and derived key
+        // check if MasterPassKey hash is equal to the MasterPassKey hash in mdb
+        // Use timingSafeEqual to protect against timing attacks
+        const match = crypto.timingSafeEqual(global.creds.mpkhash, mpk.hash)
+        // return the match and derived key
         resolve({match, key: mpk.key})
       })
       .catch((err) => {
@@ -32,8 +34,8 @@ exports.check = function (masterpass) {
 }
 
 // Set MasterPass
-exports.set = function (masterpass) {
-  return new Promise(function(resolve, reject) {
+exports.set = (masterpass) => {
+  return new Promise((resolve, reject) => {
     // Derive the MasterPassKey from the supplied masterpass
     crypto.deriveKey(masterpass, null)
       .then((mp) => {

@@ -1,6 +1,7 @@
-version: 2.0.{build}
+version: "{build}"
 
 platform:
+  - x86
   - x64
 
 cache:
@@ -12,6 +13,14 @@ cache:
 init:
   - git config --global core.autocrlf input
 
+# Only build if commit message contains '[build]'
+only_commits:
+  message: /\[build\]/
+
+install:
+  - set /p NODE_VERSION=<.node-version
+  - ps: Install-Product node $env:NODE_VERSION $env:PLATFORM
+  - npm install npm -g
 install:
   - set NODE_ENV=production
   - ps: Install-Product node 6.3.0 x64
@@ -24,6 +33,9 @@ install:
 build_script:
   - node --version
   - npm --version
-  - build -w --x64
+  - build -w --x64 --ia32
 
+# Post-install test scripts.
+# test_script:
+#   - script\test.cmd
 test: off

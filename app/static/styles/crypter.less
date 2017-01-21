@@ -6,7 +6,7 @@
 @import (less) "mixins.less";
 /* Variable declarations*/
 @invalid-color: #9F3A38;
-@fileInput-height: 38vh;
+@fileInput-height: 45vh;
 /* Section styles */
 header {
   margin: 0;
@@ -16,24 +16,8 @@ header > p {
   color: @blacker;
 }
 
-h1 {
-  font-size: 1.4rem;
-  margin-bottom: 0.1rem;
-}
-
 h3 {
   margin-top: 0;
-}
-
-p {
-  margin: 0;
-}
-
-a {
-  font-size: 0.8rem;
-  color: @blacker;
-  text-decoration: none;
-  outline: none;
 }
 
 #crypt {
@@ -45,36 +29,12 @@ a {
   overflow: hidden;
 }
 
-.crypto {
-  width: 8rem;
-  height: auto;
-  bottom: 0;
-}
 
-p.intrfo {
-  color: @dark;
-  font-size: 0.8rem;
-  margin: 0.4rem;
-}
 
 #crypted-container {
   height: 84vh;
   overflow-y: scroll;
   overflow-x: hidden;
-}
-
-#fileInput {
-  margin-top: 6vh;
-  width: 100%;
-  height: @fileInput-height;
-  text-align: center;
-  display: flex;
-  flex-flow: column;
-
-  p {
-    line-height: @fileInput-height;
-    color: @white;
-  }
 }
 
 .panel-container {
@@ -108,7 +68,35 @@ p.intrfo {
   }
 }
 
-div#panel-crypted {
+#panel-crypt {
+  h1 {
+    margin: 0.4rem 0;
+    font-size: 1.4rem;
+  }
+  p.subtitle {
+    margin-top: 0.4rem;
+  }
+  p.leadinfo {
+    color: @dark;
+    font-size: 0.8rem;
+    margin: 0.2rem 1rem;
+  }
+  #fileInput {
+    margin-top: 6vh;
+    width: 100%;
+    height: @fileInput-height;
+    text-align: center;
+    display: flex;
+    flex-flow: column;
+
+    p {
+      line-height: @fileInput-height;
+      color: @white;
+    }
+  }
+}
+
+#panel-crypted {
   // height: 90vh;
   // flex: 1.8;
   // display: flex;
@@ -154,40 +142,14 @@ div#panel-crypted {
   }
 }
 
-input[type=text] {
-  border: none;
-  border-bottom: 1px solid @light;
-  outline: none;
-  vertical-align: top;
-
-  &:focus {
-    animation-name: colorTrans;
-    animation-duration: 2s;
-    border-bottom: 1px solid @black;
+a[data-action="app:open-settings"] {
+  img.info {
+    height: 1.2rem;
+    position: absolute;
+    right: 0;
+    top: 0;
+    padding: 0.5rem;
   }
-}
-
-p.info {
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  max-height: 0;
-  overflow: hidden;
-  padding: 0 0.5rem;
-  transition: max-height 0.3s, padding 0.3s;
-  background-color: #efefef;
-  font-size: 0.8rem;
-}
-
-img.info {
-  float: right;
-  height: 0.9rem;
-}
-
-img.info:hover + p.info {
-  max-height: 10rem;
-  padding-top: 0.5rem;
-  padding-bottom: 0.5rem;
 }
 
 a.back {
@@ -197,11 +159,6 @@ a.back {
 a.back > img {
   height: 1rem;
   width: auto;
-}
-
-div.forgotMP {
-  padding: 0.2rem 0.2rem 0 0;
-  text-align: right;
 }
 
 footer {

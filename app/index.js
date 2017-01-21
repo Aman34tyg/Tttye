@@ -1,29 +1,32 @@
 'use strict'
-const electron = require('electron')
-const app = electron.app
-const BrowserWindow = electron.BrowserWindow
-const ipc = electron.ipcMain
-const dialog = electron.dialog
-const crypto = require('./src/crypto')
-const Db = require('./src/Db')
-const MasterPass = require('./src/MasterPass')
-const MasterPassKey = require('./src/MasterPassKey')
-const _ = require('lodash')
+/**
+ * index.js
+ * Entry point for app execution
+ ******************************/
+// Electron
+const {app, dialog} = require('electron')
+// Core
+const Db = require('./core/Db')
+// Windows
+const crypter = require('./src/crypter')
+const masterPassPrompt = require('./src/masterPassPrompt')
+const setup = require('./src/setup')
+const settings = require('./src/settings')
+const {ERRORS} = require('./config')
 // adds debug features like hotkeys for triggering dev tools and reload
 require('electron-debug')()
 
 // declare global constants
+// MasterPass credentials global
 global.creds = {}
+// User settings global
+global.settings = {}
+// Paths global (only resolved at runtime)
 global.paths = {
   mdb: `${app.getPath('userData')}/mdb`,
   userData: app.getPath('userData'),
   home: app.getPath('home'),
   documents: app.getPath('documents')
-}
-global.views = {
-  masterpassprompt: `file://${__dirname}/static/masterpassprompt.html`,
-  setup: `file://${__dirname}/static/setup.html`,
-  crypter: `file://${__dirname}/static/crypter.html`
 }
 const logger = require('./script/logger')
 
@@ -32,6 +35,7 @@ logger.info(`AppPath: ${app.getAppPath()}`)
 logger.info(`UseData Path: ${app.getPath('userData')}`)
 process.chdir(app.getAppPath())
 logger.info(`Changed cwd to: ${process.cwd()}`)
+logger.info(`Electron v${process.versions.electron}`)
 logger.info(`Electron node v${process.versions.node}`)
 
 /**
@@ -41,14 +45,10 @@ logger.info(`Electron node v${process.versions.node}`)
 const init = function () {
   return new Promise(function (resolve, reject) {
     // initialise mdb
-    global.mdb = new Db(global.paths.mdb)
-    logger.info(`status: ${global.mdb._status}`)
-    // Get the credentials serialized object from mdb
-    // Resolves with false if not found
-    // setTimeout to ensure mdb is open before get creds
-    setTimeout(function () {
-      resolve(global.mdb.onlyGetValue('creds'))
-    }, 1000)
+    global.mdb = new Db(global.paths.mdb, function (mdb) {
+      // Get the credentials serialized object from mdb
+      resolve(mdb.get('creds'))
+    })
   })
 }
 
@@ -58,13 +58,6 @@ const initMain = function () {
     // restore the creds object globally
     resolve(global.mdb.restoreGlobalObj('creds'))
   })
-}
-
-const closeDb = function () {
-  if (_.isEmpty(global.mdb) ? false : global.mdb.isOpen()) {
-    // close mdb before quitting if opened
-    global.mdb.close()
-  }
 }
 
 /**
@@ -98,9 +91,11 @@ app.on('ready', function () {
             app.quit()
           })
           .catch(function (error) {
-            // Catch any fatal errors and exit
-            logger.error(`PROMISE ERR: ${error.stack}`)
-            // dialog.showErrorBox('Oops, we encountered a problem...', error.message)
+            if (error) {
+              // Catch any fatal errors and exit
+              logger.error(`PROMISE ERR: ${error.stack}`)
+              dialog.showErrorBox(ERRORS.PROMISE, error.message)
+            }
             app.quit()
           })
       } else {
@@ -116,7 +111,7 @@ app.on('ready', function () {
           .catch(function (error) {
             logger.error(`PROMISE ERR: ${error.stack}`)
             // Display error to user
-            dialog.showErrorBox('Oops, we encountered a problem...', error.message)
+            dialog.showErrorBox(ERRORS.PROMISE, error.message)
             app.quit()
           })
       }
@@ -124,10 +119,15 @@ app.on('ready', function () {
     .catch(function (error) {
       logger.error(`PROMISE ERR: ${error.stack}`)
       // Display error to user
-      dialog.showErrorBox('Oops, we encountered a problem...', error.message)
+      dialog.showErrorBox(ERRORS.PROMISE, error.message)
       app.quit()
     })
 })
+
+/**
+ * Electron events
+ **/
+let settingsWindowNotOpen = true
 
 app.on('window-all-closed', () => {
   logger.verbose('APP: window-all-closed event emitted')
@@ -137,13 +137,58 @@ app.on('window-all-closed', () => {
 
 app.on('quit', () => {
   logger.info('APP: quit event emitted')
-  closeDb()
+  global.mdb.close()
+    .catch((err) => {
+      console.error(err)
+      throw err
+    })
 })
 
 app.on('will-quit', (event) => {
-  // will exit program once exit procedures have been run (exit flag is true)
+  // will exit program once exit procedures have been run
   logger.info(`APP.ON('will-quit'): will-quit event emitted`)
-  closeDb()
+  global.mdb.close()
+    .catch((err) => {
+      console.error(err)
+      throw err
+    })
+})
+
+/**
+ * Custom events
+ **/
+
+app.on('app:quit', () => {
+  logger.verbose('APP: app:quit event emitted')
+  app.quit()
+})
+
+app.on('app:open-settings', () => {
+  logger.verbose('APP: app:open-settings event emitted')
+  // Check if not already opened
+  if (settingsWindowNotOpen) {
+    settingsWindowNotOpen = false
+    settingsWindow()
+      .then(() => {
+        logger.verbose('APP: closed settingsWindow')
+        // Closed so not open anymore
+        settingsWindowNotOpen = true
+      })
+  }
+})
+
+app.on('app:check-updates', () => {
+  logger.verbose('APP: app:check-updates event emitted')
+  // Check for updates
+})
+
+app.on('app:relaunch', () => {
+  logger.verbose('APP: app:relaunch event emitted')
+  // Relaunch Crypter
+  app.relaunch()
+  // Exit successfully
+  app.quit(0)
+  // app.exit(0)
 })
 
 /**
@@ -153,7 +198,7 @@ app.on('will-quit', (event) => {
 // Creates the crypter window
 let crypterWindow = function () {
   return new Promise(function (resolve, reject) {
-    CrypterWindow(function () {
+    crypter.window(global, function () {
       resolve()
     })
   })
@@ -162,7 +207,7 @@ let crypterWindow = function () {
 // Creates the setup window
 let setupWindow = function () {
   return new Promise(function (resolve, reject) {
-    SetupWindow(function (err) {
+    setup.window(global, function (err) {
       if (err) {
         reject(err)
       } else {
@@ -175,238 +220,18 @@ let setupWindow = function () {
 // Creates the MasterPassPrompt window
 let masterPassPromptWindow = function () {
   return new Promise(function (resolve, reject) {
-    MasterPassPromptWindow(function (err, gotMP) {
-      if (err) reject(err)
-      if (gotMP) {
-        resolve()
-      } else {
-        reject(new Error('Could not get MasterPass'))
-      }
+    masterPassPrompt.window(global, function (err, gotMP) {
+      if (err || !gotMP) reject(err)
+      resolve()
     })
   })
 }
 
-/**
- * Controller functions (windows)
- **/
-
-function CrypterWindow (callback) {
-  // creates a new BrowserWindow
-  let win = new BrowserWindow({
-    width: 350,
-    height: 450,
-    center: true,
-    show: true,
-    titleBarStyle: 'hidden-inset',
-    resizable: false,
-    movable: true
+// Creates the settings window
+let settingsWindow = function () {
+  return new Promise(function (resolve, reject) {
+    settings.window(global, function () {
+      resolve()
+    })
   })
-
-  let webContents = win.webContents
-
-  // loads crypt.html view into the BrowserWindow
-  win.loadURL(global.views.crypter)
-
-  // When user selects a file to encrypt in Crypter window
-  ipc.on('cryptFile', function (event, filePath) {
-    logger.verbose('IPCMAIN: cryptFile emitted. Starting encryption...')
-    crypto.crypt(filePath, global.MasterPassKey.get())
-      .then((file) => {
-        webContents.send('cryptedFile', file)
-      })
-      .catch((err) => {
-        logger.info(`cryptFile error`)
-        logger.error(err)
-        webContents.send('cryptErr', err)
-      })
-  })
-
-  // When user selects a file to decrypt in Crypter window
-  ipc.on('decryptFile', function (event, filePath) {
-    logger.verbose('IPCMAIN: decryptFile emitted. Starting decryption...')
-    // let destPath = filePath.replace('.crypto', '.decrypto')
-    crypto.decrypt(filePath, global.MasterPassKey.get())
-      .then((file) => {
-        logger.info('decrypted')
-        webContents.send('decryptedFile', file)
-      })
-      .catch((err) => {
-        logger.info(`decryptFile error`)
-        logger.error(err)
-        webContents.send('cryptErr', err.message)
-      })
-  })
-
-  win.on('closed', function () {
-    logger.info('win.closed event emitted for PromptWindow')
-    win = null
-    callback()
-  })
-
-  return win
-}
-
-function SetupWindow (callback) {
-  // setup view controller
-
-  // creates the setup window
-  let win = new BrowserWindow({
-    width: 600,
-    height: 400,
-    center: true,
-    show: true,
-    titleBarStyle: 'hidden-inset',
-    resizable: false,
-    movable: true
-  })
-
-  let webContents = win.webContents
-  let error
-  // loads setup.html view into the SetupWindow
-  win.loadURL(global.views.setup)
-
-  ipc.on('setMasterPass', function (event, masterpass) {
-    // setMasterPass event triggered by render proces
-    logger.verbose('IPCMAIN: setMasterPass emitted Setting Masterpass...')
-    // derive MasterPassKey, genPassHash and set creds globally
-    MasterPass.set(masterpass)
-      .then((mpkey) => {
-        // set the derived MasterPassKey globally
-        global.MasterPassKey = new MasterPassKey(mpkey)
-        return
-      })
-      .then(() => {
-        // save the credentials used to derive the MasterPassKey
-        return global.mdb.saveGlobalObj('creds')
-      })
-      .then(() => {
-        // Inform user that the MasterPass has successfully been set
-        webContents.send('setMasterPassResult', null)
-      })
-      .catch((err) => {
-        // Inform user of the error that occured while setting the MasterPass
-        webContents.send('setMasterPassResult', err)
-        error = err
-      })
-  })
-
-  ipc.on('done', function (event, masterpass) {
-    // Dond event emotted from render process
-    logger.info('IPCMAIN: done emitted setup complete. Closing...')
-    // Setup successfully finished
-    // therefore set error to nothing
-    error = null
-    // Upgrade to electron >= v1.2.2
-    // app.relaunch({args: process.argv.slice(1).concat(['--relaunch'])})
-    // app.exit(0)
-    // close window (invokes 'closed') event
-    win.close()
-  })
-
-  win.on('closed', function () {
-    logger.verbose('IPCMAIN: win.closed event emitted for setupWindow.')
-    // close window by setting it to nothing (null)
-    win = null
-    // if error occured then send error back to callee else send null
-    callback((error) ? error : null)
-  })
-}
-
-// exporting window to be used in MasterPass module
-function MasterPassPromptWindow (callback) {
-  let gotMP = false // init gotMP flag with false
-  let error = null
-  const CLOSE_TIMEOUT = 2000
-  // creates a new BrowserWindow
-  let win = new BrowserWindow({
-    width: 300,
-    height: 450,
-    center: true,
-    show: true,
-    titleBarStyle: 'hidden-inset',
-    resizable: false,
-    movable: true
-  })
-  let webContents = win.webContents
-
-  // loads masterpassprompt.html view into the BrowserWindow
-  win.loadURL(global.views.masterpassprompt)
-
-  ipc.on('checkMasterPass', function (event, masterpass) {
-    logger.verbose('IPCMAIN: checkMasterPass emitted. Checking MasterPass...')
-    // Check user submitted MasterPass
-    MasterPass.check(masterpass)
-      .then((res) => {
-        if (res.match) {
-          // Password matches
-          logger.info('IPCMAIN: PASSWORD MATCHES!')
-          // Save MasterPassKey (while program is running)
-          global.MasterPassKey = new MasterPassKey(res.key)
-          // send result match result to masterpassprompt.html
-          webContents.send('checkMasterPassResult', {
-            err: null,
-            match: res.match
-          })
-          gotMP = true
-          // Close after 1 second
-          setTimeout(function () {
-            // close window (invokes 'closed') event
-            win.close()
-          }, CLOSE_TIMEOUT)
-        } else {
-          logger.warn('IPCMAIN: PASSWORD DOES NOT MATCH!')
-          webContents.send('checkMasterPassResult', {
-            err: null,
-            match: res.match
-          })
-        }
-      })
-      .catch((err) => {
-        // Inform user of error (on render side)
-        webContents.send('checkMasterPassResult', err)
-        // set error
-        error = err
-        // Close after 1 second
-        setTimeout(function () {
-          // close window (invokes 'closed') event
-          win.close()
-        }, CLOSE_TIMEOUT)
-      })
-  })
-
-  ipc.on('setMasterPass', function (event, masterpass) {
-    // setMasterPass event triggered by render proces
-    logger.verbose('IPCMAIN: setMasterPass emitted Setting Masterpass...')
-    // derive MasterPassKey, genPassHash and set creds globally
-    MasterPass.set(masterpass)
-      .then((mpkey) => {
-        // set the derived MasterPassKey globally
-        global.MasterPassKey = new MasterPassKey(mpkey)
-        return
-      })
-      .then(() => {
-        // save the credentials used to derive the MasterPassKey
-        return global.mdb.saveGlobalObj('creds')
-      })
-      .then(() => {
-        // Inform user that the MasterPass has successfully been set
-        logger.verbose('IPCMAIN: Masterpass has been reset successfully')
-        webContents.send('setMasterPassResult', null)
-      })
-      .catch((err) => {
-        // Inform user of the error that occured while setting the MasterPass
-        webContents.send('setMasterPassResult', err)
-        error = err
-      })
-  })
-
-  win.on('closed', function () {
-    logger.info('win.closed event emitted for PromptWindow')
-    // send error and gotMP back to callee (masterPassPromptWindow Promise)
-    callback(error, gotMP)
-    // close window by setting it to nothing (null)
-    win = null
-  })
-
-  return win
 }

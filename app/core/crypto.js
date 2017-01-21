@@ -10,26 +10,28 @@ const scrypto = require('crypto')
 const logger = require('winston')
 const Readable = require('stream').Readable
 const tar = require('tar-fs')
-const CRYPTER_REGEX = /^Crypter(.*)$/igm
+const {CRYPTO, REGEX, ERRORS} = require('../config')
 
-// Crypto default constants
-let defaults = {
-  iterations: 50000, // file encryption key derivation iterations
-  keyLength: 32, // encryption key length
-  ivLength: 12, // initialisation vector length
-  algorithm: 'aes-256-gcm', // encryption algorithm
-  digest: 'sha256', // digest function
-  hash_alg: 'sha256', // hashing function
-  mpk_iterations: 100000 // MasterPassKey derivation iterations
+// Helper functions
+
+let readFile = (path) => {
+  return new Promise((resolve, reject) => {
+    fs.readFile(path, 'utf-8', (err, data) => {
+      if (err) reject(err)
+      resolve(data)
+    })
+  })
 }
 
-exports.crypt = function (origpath, masterpass) {
-  return new Promise(function (resolve, reject) {
+// Exports
+
+exports.crypt = (origpath, masterpass) => {
+  return new Promise((resolve, reject) => {
     // Resolve the destination path for encrypted file
     exports.encrypt(origpath, masterpass)
       .then((creds) => {
         resolve({
-          op: 'Encrypted', // Crypter operation
+          op: CRYPTO.ENCRYPT_OP, // Crypter operation
           name: path.basename(origpath), // filename
           path: origpath, // path of the (unencrypted) file
           cryptPath: creds.cryptpath, // path of the encrypted file
@@ -45,20 +47,19 @@ exports.crypt = function (origpath, masterpass) {
   })
 }
 
-exports.encrypt = function (origpath, mpkey) {
+exports.encrypt = (origpath, mpkey) => {
   // Encrypts any arbitrary data passed with the pass
-  return new Promise(function (resolve, reject) {
+  return new Promise((resolve, reject) => {
     // derive the encryption key
-    exports.deriveKey(mpkey, null, defaults.iterations)
+    exports.deriveKey(mpkey, null, CRYPTO.DEFAULTS.ITERATIONS)
       .then((dcreds) => {
         let tag
-        let dname = '.crypting'
-        let tempd = `${path.dirname(origpath)}/${dname}`
+        let tempd = `${path.dirname(origpath)}/${CRYPTO.ENCRYPTION_TMP_DIR}`
         let dataDestPath = `${tempd}/data`
         let credsDestPath = `${tempd}/creds`
         logger.verbose(`tempd: ${tempd}, dataDestPath: ${dataDestPath}, credsDestPath: ${credsDestPath}`)
         // create tempd temporary directory
-        fs.mkdirs(tempd, function (err) {
+        fs.mkdirs(tempd, (err) => {
           if (err)
             reject(err)
           logger.verbose(`Created ${tempd} successfully`)
@@ -68,9 +69,9 @@ exports.encrypt = function (origpath, mpkey) {
           const dataDest = fs.createWriteStream(dataDestPath)
           const credsDest = fs.createWriteStream(credsDestPath)
           // generate a cryptographically secure random iv
-          const iv = scrypto.randomBytes(defaults.ivLength)
+          const iv = scrypto.randomBytes(CRYPTO.DEFAULTS.IVLENGTH)
           // create the AES-256-GCM cipher with iv and derive encryption key
-          const cipher = scrypto.createCipheriv(defaults.algorithm, dcreds.key, iv)
+          const cipher = scrypto.createCipheriv(CRYPTO.DEFAULTS.ALGORITHM, dcreds.key, iv)
 
           // Read file, apply tranformation (encryption) to stream and
           // then write stream to filesystem
@@ -104,19 +105,26 @@ exports.encrypt = function (origpath, mpkey) {
 
           // writestream finish handler
           credsDest.on('finish', () => {
-            let tarDestPath = `${origpath}.crypto`
+            let tarDestPath = origpath + CRYPTO.EXT
             const tarDest = fs.createWriteStream(tarDestPath)
+            const tarPack = tar.pack(tempd)
             // Pack directory and zip into a .crypto file
-            tar.pack(tempd).pipe(tarDest)
+            tarPack.pipe(tarDest)
+
             tarDest.on('error', (err) => {
               // reject on writestream
               reject(err)
             })
+
+            tarPack.on('error', (err) => {
+              // reject on writestream
+              reject(err)
+            })
+
             tarDest.on('finish', () => {
               // Remove temporary dir tempd
-              fs.remove(tempd, function (err) {
-                if (err)
-                  reject(err)
+              fs.remove(tempd, (err) => {
+                if (err) reject(err)
                 // return all the credentials and parameters used for encryption
                 logger.verbose('Successfully deleted tempd!')
                 resolve({
@@ -137,41 +145,38 @@ exports.encrypt = function (origpath, mpkey) {
       })
   })
 }
-let readFile = function (path) {
-  return new Promise(function (resolve, reject) {
-    fs.readFile(path, 'utf-8', function (err, data) {
-      if (err) reject(err)
-      resolve(data)
-    })
-  })
-}
 
-exports.decrypt = function (origpath, mpkey) {
+exports.decrypt = (origpath, mpkey) => {
   // Decrypts a crypto format file passed with the pass
-  return new Promise(function (resolve, reject) {
+  return new Promise((resolve, reject) => {
     // Extract a directory
-    let dname = '.decrypting'
-    let tempd = `${path.dirname(origpath)}/${dname}`
-    let dataOrigPath = `${tempd}/data`
-    let credsOrigPath = `${tempd}/creds`
-    let dataDestPath = origpath.replace('.crypto', '')
-    dataDestPath = dataDestPath.replace(path.basename(dataDestPath), `Decrypted ${path.basename(dataDestPath)}`)
+    let tempd = `${path.dirname(origpath)}/${CRYPTO.DECRYPTION_TMP_DIR}`
+    let dataOrigPath = `${tempd}/${CRYPTO.FILE_DATA}`
+    let credsOrigPath = `${tempd}/${CRYPTO.FILE_CREDS}`
+    let dataDestPath = origpath.replace(CRYPTO.EXT, '')
+    dataDestPath = dataDestPath.replace(path.basename(dataDestPath), CRYPTO.DECRYPT_TITLE_PREPEND + path.basename(dataDestPath))
     let tarOrig = fs.createReadStream(origpath)
     let tarExtr = tar.extract(tempd)
-    // Extract tar to dname directory
+    // Extract tar to CRYPTO.DECRYPTION_TMP_DIR directory
     tarOrig.pipe(tarExtr)
 
     tarOrig.on('error', (err) => {
       // reject on writestream
       reject(err)
     })
+
+    tarExtr.on('error', (err) => {
+      // reject on extraction error
+      reject(err)
+    })
+
     tarExtr.on('finish', () => {
       // Now read creds and use to decrypt data
       logger.verbose('Finished extracting')
 
       readFile(credsOrigPath)
         .then((credsLines) => {
-          let credsLine = credsLines.trim().match(CRYPTER_REGEX)
+          let credsLine = credsLines.trim().match(REGEX.ENCRYPTION_CREDS)
 
           if (credsLine) {
             let creds = credsLine[0].split('#')
@@ -184,10 +189,10 @@ exports.decrypt = function (origpath, mpkey) {
             // Read encrypted data stream
             const dataOrig = fs.createReadStream(dataOrigPath)
             // derive the original encryption key for the file
-            exports.deriveKey(mpkey, salt, defaults.iterations)
+            exports.deriveKey(mpkey, salt, CRYPTO.DEFAULTS.ITERATIONS)
               .then((dcreds) => {
                 try {
-                  let decipher = scrypto.createDecipheriv(defaults.algorithm, dcreds.key, iv)
+                  let decipher = scrypto.createDecipheriv(CRYPTO.DEFAULTS.ALGORITHM, dcreds.key, iv)
                   decipher.setAuthTag(authTag)
                   const dataDest = fs.createWriteStream(dataDestPath)
                   dataOrig.pipe(decipher).pipe(dataDest)
@@ -207,12 +212,12 @@ exports.decrypt = function (origpath, mpkey) {
                   dataDest.on('finish', () => {
                     logger.verbose(`Encrypted to ${dataDestPath}`)
                     // Now delete tempd (temporary directory)
-                    fs.remove(tempd, function (err) {
+                    fs.remove(tempd, (err) => {
                       if (err)
                         reject(err)
                       logger.verbose(`Removed temp dir ${tempd}`)
                       resolve({
-                        op: 'Decrypted',
+                        op: CRYPTO.DECRYPT_OP,
                         name: path.basename(origpath),
                         path: origpath,
                         cryptPath: dataDestPath,
@@ -228,7 +233,7 @@ exports.decrypt = function (origpath, mpkey) {
                 }
               })
           } else {
-            reject(new Error('Not a Crypter file (can not get salt, iv and authTag)'))
+            reject(new Error(ERRORS.DECRYPT))
           }
         }).catch((err) => {
         reject(err)
@@ -237,8 +242,8 @@ exports.decrypt = function (origpath, mpkey) {
   })
 }
 
-exports.deriveKey = function (pass, psalt, iterations = defaults.mpk_iterations) {
-  return new Promise(function (resolve, reject) {
+exports.deriveKey = (pass, psalt) => {
+  return new Promise((resolve, reject) => {
     // reject with error if pass not provided
     if (!pass) reject(new Error('Pass to derive key from not provided'))
 
@@ -247,13 +252,13 @@ exports.deriveKey = function (pass, psalt, iterations = defaults.mpk_iterations)
     // If psalt is not provided then generate a cryptographically secure salt
     // and assign it
     const salt = (psalt)
-      ? ((psalt instanceof Buffer)
+      ? ((Buffer.isBuffer(psalt))
         ? psalt
         : new Buffer(psalt))
-      : scrypto.randomBytes(defaults.keyLength)
+      : scrypto.randomBytes(CRYPTO.DEFAULTS.KEYLENGTH)
 
     // derive the key using the salt, password and default crypto setup
-    scrypto.pbkdf2(pass, salt, iterations, defaults.keyLength, defaults.digest, (err, key) => {
+    scrypto.pbkdf2(pass, salt, CRYPTO.DEFAULTS.MPK_ITERATIONS, CRYPTO.DEFAULTS.KEYLENGTH, CRYPTO.DEFAULTS.DIGEST, (err, key) => {
       if (err) reject(err)
       // return the key and the salt
       resolve({key, salt})
@@ -262,26 +267,46 @@ exports.deriveKey = function (pass, psalt, iterations = defaults.mpk_iterations)
 }
 
 // create a sha256 hash of the MasterPassKey
-exports.genPassHash = function (masterpass, salt) {
-  return new Promise(function (resolve, reject) {
+exports.genPassHash = (masterpass, salt) => {
+  return new Promise((resolve, reject) => {
     // convert the masterpass (of type Buffer) to a hex encoded string
     // if it is not already one
-    const pass = (masterpass instanceof Buffer) ? masterpass.toString('hex') : masterpass
+    const pass = Buffer.isBuffer(masterpass) ? masterpass.toString('hex') : masterpass
 
     // if salt provided then the MasterPass is being checked
     // if salt not provided then the MasterPass is being set
     if (salt) {
       // create hash from the contanation of the pass and salt
       // assign the hex digest of the created hash
-      const hash = scrypto.createHash(defaults.hash_alg).update(`${pass}${salt}`).digest('hex')
+      const hash = scrypto.createHash(CRYPTO.DEFAULTS.HASH_ALG).update(`${pass}${salt}`).digest('hex')
       resolve({hash, key: masterpass})
     } else {
       // generate a cryptographically secure salt and use it as the salt
-      const salt = scrypto.randomBytes(defaults.keyLength).toString('hex')
+      const salt = scrypto.randomBytes(CRYPTO.DEFAULTS.KEYLENGTH).toString('hex')
       // create hash from the contanation of the pass and salt
       // assign the hex digest of the created hash
-      const hash = scrypto.createHash(defaults.hash_alg).update(`${pass}${salt}`).digest('hex')
+      const hash = scrypto.createHash(CRYPTO.DEFAULTS.HASH_ALG).update(`${pass}${salt}`).digest('hex')
       resolve({hash, salt, key: masterpass})
     }
   })
+}
+
+// Converts a buffer array to a hex string
+exports.buf2hex = (arr) => {
+  const buf = new Buffer(arr)
+  return buf.toString('hex')
+}
+
+// Compares vars in a constant time (protects against timing attacks)
+exports.timingSafeEqual = (a, b) => {
+  // convert args to buffers if not already
+  a = (Buffer.isBuffer(a)) ? a : new Buffer(a)
+  b = (Buffer.isBuffer(b)) ? b : new Buffer(b)
+  var result = 0
+  var l = a.length
+  while (l--) {
+    // bitwise comparison
+    result |= a[l] ^ b[l]
+  }
+  return result === 0
 }
