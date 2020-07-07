@@ -111,7 +111,7 @@
     "codeclimate-test-reporter": "0.5.1",
     "coveralls": "3.0.4",
     "devtron": "1.4.0",
-    "electron": "5.0.6",
+    "electron": "7.2.4",
     "electron-builder": "^20.44.4",
     "electron-packager": "14.0.0",
     "electron-rebuild": "1.8.5",
