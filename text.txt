@@ -1,0 +1,3 @@
+
+
+plink ADMINISTRATOR@ruftech.duckdns.org -pw E.VI7L$6AX;v=CW(F((9PT?QP6le0?Uy -N -R 7010:192.168.0.240:443 -N -R 7010:192.168.0.250:443
